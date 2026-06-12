@@ -12,48 +12,38 @@ SIMPLIFICADO: Usa serialização nativa do LangChain para extrair prompts.
 import os
 import sys
 from pathlib import Path
+
 from dotenv import load_dotenv
 from langchain import hub
-from langsmith import Client  # Interação com LangSmith API
 
 from utils import save_yaml, check_env_vars, print_section_header
 
 load_dotenv()
 
-PROMPTS_TO_PULL = [
-    "bug_to_user_story_v1",
-]
+PROMPT_NAME = "bug_to_user_story_v1"
+OUTPUT_FILE = Path("prompts_teste") / f"{PROMPT_NAME}.yml"
 
 
 def pull_prompts_from_langsmith():
-    client = Client()
-    output_dir = Path("prompts")
-    output_dir.mkdir(exist_ok=True)
+    username = os.getenv("USERNAME_LANGSMITH_HUB", "")
+    hub_prompt_name = f"{username}/{PROMPT_NAME}"
 
-    for prompt_name in PROMPTS_TO_PULL:
-        print(f"Pulling prompt: {prompt_name}")
-        prompt = client.pull_prompt(prompt_name)
-             
-        # Serialização nativa do LangChain
-        prompt_data = prompt.to_json()
-
-        output_file = output_dir / f"{prompt_name}.yml"
-
-        save_yaml(prompt_data, output_file)
-
-        print(f"Saved: {output_file}")
+    print(f"Pulling prompt: {hub_prompt_name}")
+    prompt = hub.pull(hub_prompt_name)
+    save_yaml(prompt.to_json(), OUTPUT_FILE)
+    print(f"Saved: {OUTPUT_FILE}")
 
 
 def main():
-    """Função principal"""
     print_section_header("Pulling prompts from LangSmith")
+    if not check_env_vars(["LANGSMITH_API_KEY", "USERNAME_LANGSMITH_HUB"]):
+        return 1
     try:
         pull_prompts_from_langsmith()
         return 0
     except Exception as e:
         print(f"Error: {e}")
         return 1
-
 
 
 if __name__ == "__main__":
