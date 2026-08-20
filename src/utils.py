@@ -153,7 +153,7 @@ def extract_json_from_response(response_text: str) -> Optional[Dict[str, Any]]:
 
     Args:
         response_text: Texto da resposta do LLM
-
+    
     Returns:
         Dicionário extraído ou None se não encontrar JSON válido
     """
@@ -219,7 +219,7 @@ def get_llm(model: Optional[str] = None, temperature: float = 0.0):
         return ChatGoogleGenerativeAI(
             model=model_name,
             temperature=temperature,
-            google_api_key=api_key
+            api_key=api_key
         )
 
     else:

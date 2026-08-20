@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from langchain import hub
+from langsmith import Client
 
 from utils import save_yaml, check_env_vars, print_section_header
 
@@ -29,7 +29,11 @@ def pull_prompts_from_langsmith():
     hub_prompt_name = f"{username}/{PROMPT_NAME}"
 
     print(f"Pulling prompt: {hub_prompt_name}")
-    prompt = hub.pull(hub_prompt_name)
+    client = Client()
+    prompt = client.pull_prompt(
+        hub_prompt_name,
+        dangerously_pull_public_prompt=True,
+    )
     save_yaml(prompt.to_json(), OUTPUT_FILE)
     print(f"Saved: {OUTPUT_FILE}")
 
