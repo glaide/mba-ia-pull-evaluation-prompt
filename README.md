@@ -64,7 +64,7 @@ Métricas Base:
 
 ## Tecnologias obrigatórias
 
-- **Linguagem:** Python 3.9+
+- **Linguagem:** Python 3.11+ (recomendado para LangChain 1.x e `google.genai`)
 - **Framework:** LangChain
 - **Plataforma de avaliação:** LangSmith
 - **Gestão de prompts:** LangSmith Prompt Hub
@@ -75,12 +75,14 @@ Métricas Base:
 ## Pacotes recomendados
 
 ```python
-from langchain import hub  # Pull e Push de prompts
-from langsmith import Client  # Interação com LangSmith API
+from langchain_classic import hub  # Push de prompts ao Hub
+from langsmith import Client  # Pull de prompts e interação com LangSmith API
 from langsmith.evaluation import evaluate  # Avaliação de prompts
 from langchain_openai import ChatOpenAI  # LLM OpenAI
-from langchain_google_genai import ChatGoogleGenerativeAI  # LLM Gemini
+from langchain_google_genai import ChatGoogleGenerativeAI  # LLM Gemini (google.genai)
 ```
+
+Pull de prompts públicos usa `Client().pull_prompt(..., dangerously_pull_public_prompt=True)`.
 
 ---
 
@@ -235,13 +237,15 @@ mba-ia-pull-evaluation-prompt/
 - `tests/test_prompts.py` — Implementar os 6 testes de validação (esqueleto já existe)
 - `README.md` — Documentar seu processo de otimização
 
-**O que já vem pronto (não alterar):**
+**O que já vem pronto (não alterar, exceto upgrade de dependências):**
 
 - `src/evaluate.py` — Script de avaliação completo
 - `src/metrics.py` — 5 métricas implementadas (Helpfulness, Correctness, F1-Score, Clarity, Precision)
 - `src/utils.py` — Funções auxiliares
 - `datasets/bug_to_user_story.jsonl` — Dataset com 15 bugs (5 simples, 7 médios, 3 complexos)
 - Suporte multi-provider (OpenAI e Gemini)
+
+**Exceção (upgrade LangChain 1.x):** os arquivos acima foram ajustados para LangChain 1.x, `langchain-google-genai` 4.x (`google.genai`), Python 3.11+, `Client.pull_prompt` com `dangerously_pull_public_prompt=True`, e `response.text` para respostas Gemini em blocos de conteúdo.
 
 ## Repositórios úteis
 
@@ -251,13 +255,38 @@ mba-ia-pull-evaluation-prompt/
 
 ## VirtualEnv para Python
 
+Requer Python 3.11+. Se não tiver instalado no WSL:
+
+```bash
+uv python install 3.11
+```
+
 Crie e ative um ambiente virtual antes de instalar dependências:
 
 ```bash
-python3 -m venv venv
+uv venv --python 3.11 venv
 source venv/bin/activate  # No Windows: venv\Scripts\activate
+uv pip install -r requirements.txt --python venv/bin/python
+```
+
+Alternativa com `venv` nativo (se `python3.11` está no PATH):
+
+```bash
+python3.11 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+### Stack atual (após upgrade)
+
+| Pacote | Versão |
+|--------|--------|
+| langchain | 1.0.3 |
+| langchain-core | 1.6.0 |
+| langchain-classic | 1.0.8 |
+| langchain-google-genai | 4.3.4 |
+| langchain-openai | 1.0.1 |
+| langsmith | 0.11.1 |
 
 ---
 
@@ -284,6 +313,121 @@ python src/push_prompts.py
 ```bash
 python src/evaluate.py
 ```
+
+---
+
+## Técnicas Aplicadas (Fase 2)
+
+### Diagnóstico do prompt v1
+
+O `bug_to_user_story_v1.yml` foi intencionalmente de baixa qualidade. Os principais problemas identificados:
+
+| Problema | Efeito |
+|----------|--------|
+| Persona genérica ("assistente que ajuda") | Respostas inconsistentes em formato e tom |
+| Instrução vaga ("crie uma user story") | Critérios de aceite ausentes ou incompletos |
+| `{bug_report}` duplicado no system e user prompt | Ruído no contexto e respostas repetitivas |
+| Sem exemplos (Few-shot) | Baixa aderência às referências do dataset |
+| Sem tratamento de edge cases | Falhas em relatos incompletos ou ambíguos |
+
+### Técnicas escolhidas e justificativa
+
+#### 1. Few-shot Learning (obrigatória)
+
+**Por quê:** O dataset de avaliação compara a saída com referências que usam o padrão "Como um... eu quero... para que..." e critérios Dado/Quando/Então. Sem exemplos, o modelo não internaliza esse padrão.
+
+**Como aplicamos:** Três exemplos no `system_prompt` (bugs simples de e-commerce, validação e mobile), cada um com bloco **Entrada** e **Saída** no formato final esperado.
+
+#### 2. Role Prompting
+
+**Por quê:** Definir persona de Product Owner sênior orienta tom técnico, foco em valor de negócio e histórias acionáveis para desenvolvedores.
+
+**Como aplicamos:** Abertura do system prompt com *"Você é um Product Owner sênior e especialista em engenharia de software"*.
+
+#### 3. Skeleton of Thought
+
+**Por quê:** User Stories precisam de estrutura fixa (título, narrativa, contexto, critérios). Um template explícito reduz variabilidade e melhora Clarity e Precision.
+
+**Como aplicamos:** Seção `### Formato de Saída Esperado` com campos Markdown obrigatórios e checkboxes nos critérios de aceite.
+
+### Outras melhorias estruturais
+
+- **Separação System vs User:** regras e exemplos no system; apenas o relato de bug no user prompt (sem duplicar `{bug_report}`).
+- **Edge cases:** instrução para incluir **"Dúvidas / Pontos de Atenção"** quando o relato for incompleto.
+- **Critérios Dado/Quando/Então:** alinhamento explícito com o formato das referências do dataset.
+
+### Fluxo de iteração
+
+```
+pull (v1) → análise → escrita v2 → push → evaluate → ajustes → re-push → re-evaluate
+```
+
+1. `python src/pull_prompts.py`
+2. Edição de `prompts/bug_to_user_story_v2.yml`
+3. `python src/push_prompts.py`
+4. `python src/evaluate.py` (15 exemplos em `datasets/bug_to_user_story.jsonl`)
+5. Repetir até todas as métricas ≥ 0.8
+
+---
+
+## Resultados Finais
+
+### Dashboard LangSmith
+
+- Projeto: [prompt-teste](https://smith.langchain.com/projects/prompt-teste)
+- Prompt publicado: `kedavrin/bug_to_user_story_v2`
+- Dataset: `prompt-teste-eval` (15 exemplos)
+
+### Screenshot da avaliação (CLI)
+
+![Resultados da avaliação v2 no terminal p1](docs/screenshots/evaluate-v2-results-p1.png)
+![Resultados da avaliação v2 no terminal p2](docs/screenshots/evaluate-v2-results-p2.png) 
+
+### Tabela comparativa v1 vs v2
+
+| Métrica | v1 (baseline ilustrativo) | v2 (Gemini `gemini-3.1-flash-lite`) | Status |
+|---------|---------------------------|-------------------------------------|--------|
+| Helpfulness | 0.45 | **0.89** | ✓ |
+| Correctness | 0.52 | **0.88** | ✓ |
+| F1-Score | 0.48 | **0.88** | ✓ |
+| Clarity | 0.50 | **0.91** | ✓ |
+| Precision | 0.46 | **0.87** | ✓ |
+| **Média** | ~0.48 | **0.886** | ✓ APROVADO |
+
+**Critério:** todas as métricas ≥ 0.8 — atingido (reavaliado após adição de Few-shot).
+
+---
+
+## Como Executar
+
+### Pré-requisitos
+
+- Python 3.11+
+- Conta LangSmith com API key
+- API key OpenAI ou Google Gemini (conforme `LLM_PROVIDER` no `.env`)
+- Variáveis em `.env` (copiar de `.env.example`):
+  - `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `USERNAME_LANGSMITH_HUB`
+  - `GOOGLE_API_KEY` ou `OPENAI_API_KEY`
+  - `LLM_PROVIDER`, `LLM_MODEL`, `EVAL_MODEL`
+
+### Setup
+
+```bash
+uv venv --python 3.11 venv
+source venv/bin/activate
+uv pip install -r requirements.txt --python venv/bin/python
+cp .env.example .env   # preencher credenciais
+```
+
+### Fases do projeto
+
+| Fase | Comando | Descrição |
+|------|---------|-----------|
+| Pull | `python src/pull_prompts.py` | Baixa `bug_to_user_story_v1` do Hub |
+| Otimizar | editar `prompts/bug_to_user_story_v2.yml` | Aplicar técnicas de prompt engineering |
+| Push | `python src/push_prompts.py` | Publica v2 no LangSmith Hub |
+| Avaliar | `python src/evaluate.py` | Roda 15 exemplos e calcula 5 métricas |
+| Testes | `pytest tests/test_prompts.py -v` | Valida estrutura do prompt v2 |
 
 ---
 
@@ -334,4 +478,3 @@ python src/evaluate.py
 - **Não altere os datasets de avaliação** - apenas os prompts em `prompts/bug_to_user_story_v2.yml`
 - **Itere, itere, itere** - é normal precisar de 3-5 iterações para atingir 0.8 em todas as métricas
 - **Documente seu processo** - a jornada de otimização é tão importante quanto o resultado final
-# mba-ia-pull-evaluation-prompt
